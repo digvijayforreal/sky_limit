@@ -31,9 +31,9 @@ async def lifespan(app: FastAPI):
     db.init_memories()
     saved_keys.init_db()
     # Restore configured API credentials automatically on each server start.
-    for kid, label, secret in saved_keys.load():
+    for kid, label, secret, provider in saved_keys.load():
         try:
-            await run_in_threadpool(router.add_key, label, secret, kid)
+            await run_in_threadpool(router.add_key, label, secret, kid, provider)
         except router.RouterError:
             # Keep saved credential so it can be refreshed later.
             pass
@@ -63,14 +63,15 @@ def css(): return FileResponse(FRONT/'style.css',media_type='text/css')
 def js(): return FileResponse(FRONT/'script.js',media_type='text/javascript')
 
 class AddKey(BaseModel):
-    name:str=Field(default='Groq Key',max_length=70)
+    name:str=Field(default='API Key',max_length=70)
     api_key:str=Field(min_length=15,max_length=300)
+    provider:str=Field(default='groq',pattern='^(groq|google)$')
     remember:bool=True
 
 class ChatRequest(BaseModel):
     chat_id:str
     message:str=Field(min_length=1,max_length=16000)
-    model:str=Field(min_length=1,max_length=150)
+    model:str=Field(min_length=1,max_length=220)
 
 class RenameRequest(BaseModel):
     title:str=Field(min_length=1,max_length=100)
@@ -81,9 +82,9 @@ def keys():return {'keys':router.list_keys()}
 @app.post('/api/keys')
 async def add_key(payload:AddKey):
     try:
-        result=await run_in_threadpool(router.add_key,payload.name,payload.api_key)
+        result=await run_in_threadpool(router.add_key,payload.name,payload.api_key,None,payload.provider)
         if payload.remember:
-            saved_keys.save(result['id'],payload.name,payload.api_key)
+            saved_keys.save(result['id'],payload.name,payload.api_key,payload.provider)
         return result
     except router.RouterError as exc: raise HTTPException(400,str(exc))
 
@@ -233,12 +234,12 @@ class FailoverTest(BaseModel):
 
 @app.post('/api/test-failover')
 async def test_failover(payload:FailoverTest):
-    if sum(payload.model in k['models'] for k in router.list_keys() if k['status']!='invalid')<2:
+    if router.model_key_count(payload.model)<2:
         raise HTTPException(400,'At least two valid keys must advertise the selected model.')
     try:
         answer,meta=await run_in_threadpool(router.completion,payload.model,[{'role':'user','content':'Reply with only: Backup connection successful.'}],True)
     except router.RouterError as exc:raise HTTPException(503,str(exc))
-    return {'answer':answer,'meta':meta,'note':'First eligible key was artificially skipped; backup key made a real Groq request.'}
+    return {'answer':answer,'meta':meta,'note':'First eligible key was artificially skipped; the next eligible provider key made a real request.'}
 
 
 class MemoryInput(BaseModel):

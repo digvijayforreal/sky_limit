@@ -2,6 +2,7 @@
 Protect the data directory with filesystem permissions; never commit or share it.
 """
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 
@@ -11,21 +12,34 @@ LOCK = RLock()
 def connect():
     PATH.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(PATH, timeout=15)
-    db.execute("CREATE TABLE IF NOT EXISTS saved_keys (id TEXT PRIMARY KEY, label TEXT NOT NULL, secret TEXT NOT NULL)")
+    db.execute("CREATE TABLE IF NOT EXISTS saved_keys (id TEXT PRIMARY KEY, label TEXT NOT NULL, secret TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'groq')")
+    columns = {row[1] for row in db.execute("PRAGMA table_info(saved_keys)")}
+    if "provider" not in columns:
+        db.execute("ALTER TABLE saved_keys ADD COLUMN provider TEXT NOT NULL DEFAULT 'groq'")
     return db
 
+@contextmanager
+def connection():
+    db = connect()
+    try:
+        with db:
+            yield db
+    finally:
+        db.close()
+
 def init_db():
-    with LOCK, connect():
+    with LOCK, connection():
         pass
 
-def save(key_id, label, secret):
-    with LOCK, connect() as db:
-        db.execute("INSERT OR REPLACE INTO saved_keys(id,label,secret) VALUES (?,?,?)", (key_id,label,secret.strip()))
+def save(key_id, label, secret, provider="groq"):
+    with LOCK, connection() as db:
+        db.execute("INSERT OR REPLACE INTO saved_keys(id,label,secret,provider) VALUES (?,?,?,?)",
+                   (key_id,label,secret.strip(),provider))
 
 def load():
-    with LOCK, connect() as db:
-        return db.execute("SELECT id,label,secret FROM saved_keys ORDER BY rowid").fetchall()
+    with LOCK, connection() as db:
+        return db.execute("SELECT id,label,secret,provider FROM saved_keys ORDER BY rowid").fetchall()
 
 def delete(key_id):
-    with LOCK, connect() as db:
+    with LOCK, connection() as db:
         db.execute("DELETE FROM saved_keys WHERE id=?", (key_id,))
