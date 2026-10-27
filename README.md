@@ -44,6 +44,10 @@ Enable **Save key on this computer** to restore keys on server restart. The loca
 
 Each chat stores its own full transcript. The model only receives recent messages within a bounded budget. Under Engine Control > Memory, explicitly add global facts as permanent or expiring memories. These are included in prompts in new chats; memory is **not** automatically extracted from old conversation messages. You can delete memories in the dashboard.
 
+## API usage
+
+Engine Control shows successful provider requests handled by this app, reported input/output token totals, the latest response time per API key, and the 24-hour, 7-day, 30-day, or all-time totals. This local usage history is stored separately in `data/usage.db`; it does not include usage of the same key outside OmniAgent. Token totals appear only when the provider includes token counts. Groq request/token limits and reset details appear only when returned in response headers. Gemini does not provide a reliable remaining-quota value in these responses; check Google AI Studio for project quota.
+
 ## Email
 
 Configure SMTP under **Engine Control > SMTP Email** (for example, port 587 with STARTTLS or port 465 with SSL/TLS). The assistant can prepare email drafts when asked, but sending always requires you to review the recipient, subject, and body and click **Approve & Send**. A preview can be cancelled without sending. SMTP settings, including the password, are stored unencrypted in the local-only `data/email_settings.db`; do not share or commit this file. Use an app password where your provider supports it. Removing the SMTP configuration disables the email tool.

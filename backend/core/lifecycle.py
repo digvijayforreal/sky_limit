@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from starlette.concurrency import run_in_threadpool
 
-from ..repositories import database, saved_keys
+from ..repositories import database, saved_keys, usage
 from ..services import model_router
 from ..services.email_workflow import clear_pending_confirmations
 
@@ -12,6 +12,7 @@ async def lifespan(app):
     database.init_db()
     database.init_memories()
     saved_keys.init_db()
+    usage.init_db()
     clear_pending_confirmations()
 
     for key_id, label, secret, provider in saved_keys.load():

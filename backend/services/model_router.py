@@ -4,9 +4,12 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from threading import RLock
+from time import perf_counter
 from urllib.parse import quote
 
 import httpx
+
+from ..repositories import usage as usage_repository
 
 PROVIDERS = {
     'groq': {
@@ -226,6 +229,37 @@ def _google_compatible_schema(value):
     return value
 
 
+def _token_usage(data, google_native=False):
+    usage = data.get('usageMetadata', {}) if google_native else data.get('usage', {})
+    if not isinstance(usage, dict):
+        return {'input_tokens': None, 'output_tokens': None}
+    input_tokens = usage.get('promptTokenCount') if google_native else usage.get('prompt_tokens')
+    output_tokens = usage.get('candidatesTokenCount') if google_native else usage.get('completion_tokens')
+    if not google_native:
+        input_tokens = usage.get('input_tokens', input_tokens)
+        output_tokens = usage.get('output_tokens', output_tokens)
+    return {
+        'input_tokens': input_tokens if isinstance(input_tokens, int) else None,
+        'output_tokens': output_tokens if isinstance(output_tokens, int) else None,
+    }
+
+
+def _rate_limits(headers):
+    header_names = {
+        'x-ratelimit-limit-requests': 'requests_limit',
+        'x-ratelimit-remaining-requests': 'requests_remaining',
+        'x-ratelimit-reset-requests': 'requests_reset',
+        'x-ratelimit-limit-tokens': 'tokens_limit',
+        'x-ratelimit-remaining-tokens': 'tokens_remaining',
+        'x-ratelimit-reset-tokens': 'tokens_reset',
+    }
+    return {
+        field: str(headers[name])
+        for name, field in header_names.items()
+        if headers.get(name) is not None
+    }
+
+
 def _google_generate_content(client, secret, model_id, messages, tools):
     contents = []
     system_parts = []
@@ -300,7 +334,11 @@ def _google_generate_content(client, secret, model_id, messages, tools):
                     'arguments': json.dumps(call.get('args', {})),
                 },
             })
-    return {'role': 'assistant', 'content': text or None, 'tool_calls': tool_calls}
+    return (
+        {'role': 'assistant', 'content': text or None, 'tool_calls': tool_calls},
+        _token_usage(data, google_native=True),
+        _rate_limits(response.headers),
+    )
 
 
 def completion(model, messages, simulate_primary_failure=False, tools=None, return_message=False):
@@ -324,6 +362,7 @@ def completion(model, messages, simulate_primary_failure=False, tools=None, retu
             continue
         config = _provider(key.provider)
         try:
+            request_started = perf_counter()
             request = {
                 'model': model_id,
                 'messages': messages,
@@ -345,24 +384,49 @@ def completion(model, messages, simulate_primary_failure=False, tools=None, retu
             )
             if native_google_response:
                 with httpx.Client(timeout=65) as client:
-                    message = _google_generate_content(
+                    message, token_usage, rate_limits = _google_generate_content(
                         client, key.secret, model_id, messages, tools
                     )
             if native_google_response or response.is_success:
                 if not native_google_response:
-                    message = response.json()['choices'][0]['message']
+                    response_data = response.json()
+                    message = response_data['choices'][0]['message']
+                    token_usage = _token_usage(response_data)
+                    rate_limits = _rate_limits(response.headers)
+                response_ms = round((perf_counter() - request_started) * 1000)
+                usage_repository.record(
+                    key.provider,
+                    key.id,
+                    key.name,
+                    model_id,
+                    token_usage['input_tokens'],
+                    token_usage['output_tokens'],
+                    response_ms,
+                    rate_limits,
+                )
+                request_metadata = {
+                    'used_key': key.name,
+                    'key_id': key.id,
+                    'provider': key.provider,
+                    'model': model_id,
+                    'attempts': attempts + [{'key': key.name, 'result': 'success'}],
+                    'usage': token_usage,
+                    'response_ms': response_ms,
+                    'rate_limits': rate_limits,
+                }
                 if return_message:
                     with lock:
                         key.last_error = ''
                     attempts.append({'key': key.name, 'result': 'success'})
-                    return message, {'used_key': key.name, 'provider': key.provider, 'model': model_id, 'attempts': attempts}
+                    return message, request_metadata
                 content = message.get('content')
                 if not isinstance(content, str) or not content.strip():
                     raise RouterError('Provider returned an empty text response.')
                 with lock:
                     key.last_error = ''
                 attempts.append({'key': key.name, 'result': 'success'})
-                return content, {'used_key': key.name, 'provider': key.provider, 'model': model_id, 'attempts': attempts}
+                request_metadata['attempts'] = attempts
+                return content, request_metadata
             detail = _err_detail(response)
             if response.status_code in (401, 403):
                 with lock:

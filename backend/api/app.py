@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..core.config import ASSETS_DIR
 from ..core.lifecycle import lifespan
-from .routes import chat, chats, design, email, failover, keys, memories, pages
+from .routes import chat, chats, design, email, failover, keys, memories, pages, usage
 
 
 def create_app():
@@ -37,6 +37,7 @@ def create_app():
         design.router,
         failover.router,
         memories.router,
+        usage.router,
     ):
         application.include_router(api_router)
     return application
