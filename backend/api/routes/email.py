@@ -45,17 +45,20 @@ async def confirm_email(payload: EmailConfirmation):
         raise HTTPException(404, 'Email preview expired or was already handled.')
     if not database.get_chat(pending['chat_id']):
         raise HTTPException(404, 'Chat not found.')
+    recipient = payload.to if payload.to is not None else pending['to']
+    subject = payload.subject if payload.subject is not None else pending['subject']
+    body = payload.body if payload.body is not None else pending['body']
     try:
         await run_in_threadpool(
             email_tool.send_email,
-            pending['to'],
-            pending['subject'],
-            pending['body'],
+            recipient,
+            subject,
+            body,
         )
     except email_tool.EmailToolError as exc:
         raise HTTPException(502, str(exc)) from exc
 
-    result = f"Email sent to {pending['to']} with subject: {pending['subject']}"
+    result = f"Email sent to {recipient} with subject: {subject}"
     database.save_assistant_message(pending['chat_id'], result)
     return {'ok': True, 'message': result}
 

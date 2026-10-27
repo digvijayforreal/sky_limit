@@ -113,15 +113,19 @@ document.addEventListener('click',async event=>{
 function renderEmailConfirmation(email){
   const card=document.createElement('div');card.className='email-preview';
   const title=document.createElement('strong');title.textContent='EMAIL PREVIEW — REVIEW BEFORE SENDING';
-  const recipient=document.createElement('div');recipient.textContent=`TO: ${email.to}`;
-  const subject=document.createElement('div');subject.textContent=`SUBJECT: ${email.subject}`;
-  const body=document.createElement('pre');body.textContent=email.body;
+  const form=document.createElement('form');form.className='email-preview-form';
+  const recipient=document.createElement('input');recipient.type='text';recipient.required=true;recipient.value=email.to;
+  const subject=document.createElement('input');subject.type='text';subject.required=true;subject.maxLength=250;subject.value=email.subject;
+  const body=document.createElement('textarea');body.required=true;body.maxLength=20000;body.rows=8;body.value=email.body;
+  for(const [text,input] of [['TO',recipient],['SUBJECT',subject],['BODY',body]]){
+    const label=document.createElement('label');label.append(document.createTextNode(text),input);form.append(label);
+  }
   const actions=document.createElement('div');actions.className='email-preview-actions';
-  const approve=document.createElement('button');approve.textContent='APPROVE & SEND';
-  const cancel=document.createElement('button');cancel.textContent='CANCEL';
-  approve.onclick=async()=>{approve.disabled=true;cancel.disabled=true;approve.textContent='SENDING…';try{const result=await api('/api/email/confirm',{method:'POST',body:JSON.stringify({confirmation_id:email.id})});card.textContent=result.message;toast('Email sent.')}catch(e){card.textContent='Email send failed or could not be confirmed. This preview cannot be retried. '+e.message;toast(e.message)}};
+  const approve=document.createElement('button');approve.type='submit';approve.textContent='SEND EMAIL';
+  const cancel=document.createElement('button');cancel.type='button';cancel.textContent='CANCEL';
+  form.onsubmit=async event=>{event.preventDefault();approve.disabled=true;cancel.disabled=true;approve.textContent='SENDING…';try{const result=await api('/api/email/confirm',{method:'POST',body:JSON.stringify({confirmation_id:email.id,to:recipient.value,subject:subject.value,body:body.value})});card.textContent=result.message;toast('Email sent.')}catch(e){card.textContent='Email send failed or could not be confirmed. This preview cannot be retried. '+e.message;toast(e.message)}};
   cancel.onclick=async()=>{approve.disabled=true;cancel.disabled=true;try{await api('/api/email/cancel',{method:'POST',body:JSON.stringify({confirmation_id:email.id})});card.textContent='Email cancelled; nothing was sent.'}catch(e){toast(e.message);approve.disabled=false;cancel.disabled=false}};
-  actions.append(approve,cancel);card.append(title,recipient,subject,body,actions);$('messages').append(card);$('chatPanel').scrollTop=$('chatPanel').scrollHeight;
+  actions.append(approve,cancel);form.append(actions);card.append(title,form);$('messages').append(card);$('chatPanel').scrollTop=$('chatPanel').scrollHeight;
 }
 function renderEmpty(){ $('messages').innerHTML=`<div id="emptyState" class="empty-state"><div class="eyebrow">TESTING WORKSPACE</div><h1>TEST INTERFACE</h1><p>Use the controls below to test chat, model, memory, and email features.</p><div class="divider-line"></div><div class="quick-actions"><button data-prompt="Explain how large language models work.">TEST A CHAT RESPONSE</button><button data-prompt="Write a Python program that sorts a list.">TEST CODE GENERATION</button></div></div>` }
 async function getChats(){let data=await api('/api/chats');$('chatCount').textContent=String(data.chats.length).padStart(2,'0');const list=$('chatList');list.replaceChildren();for(const c of data.chats){const btn=document.createElement('div');btn.setAttribute('role','button');btn.tabIndex=0;btn.className='chat-item'+(c.id===currentChat?' active':'');const name=document.createElement('span');name.textContent=c.title;const del=document.createElement('button');del.className='del';del.textContent='×';del.title='Delete conversation';del.onclick=async ev=>{ev.stopPropagation();if(!confirm('Delete this conversation permanently?'))return;try{await api('/api/chats/'+encodeURIComponent(c.id),{method:'DELETE'});if(currentChat===c.id){currentChat=null;await newChat()}else await getChats()}catch(e){toast(e.message)}};btn.append('⌁',name,del);btn.onclick=()=>openChat(c.id);btn.onkeydown=e=>{if(e.key==='Enter')openChat(c.id)};list.append(btn)}}

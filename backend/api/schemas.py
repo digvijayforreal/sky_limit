@@ -29,6 +29,9 @@ class EmailSettingsInput(BaseModel):
 
 class EmailConfirmation(BaseModel):
     confirmation_id: str
+    to: str | None = Field(default=None, max_length=2000)
+    subject: str | None = Field(default=None, max_length=250)
+    body: str | None = Field(default=None, max_length=20000)
 
 
 class DesignRequest(BaseModel):
