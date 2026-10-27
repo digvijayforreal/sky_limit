@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 
-PATH = Path(__file__).resolve().parents[1] / "data" / "api_keys.db"
+PATH = Path(__file__).resolve().parents[2] / "data" / "api_keys.db"
 LOCK = RLock()
 
 def connect():

@@ -1,8 +1,10 @@
-"""In-memory, local-only credentials for compatible OpenAI-style model APIs."""
+"""In-memory, local-only provider routing for model APIs."""
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
 from threading import RLock
+from urllib.parse import quote
 
 import httpx
 
@@ -197,9 +199,108 @@ def _split_model_selector(model_selector):
 def _err_detail(response):
     try:
         obj = response.json()
-        return str(obj.get('error', {}).get('message', ''))[:180]
-    except Exception:
-        return f'HTTP {response.status_code}'
+        error = obj.get('error')
+        if isinstance(error, dict):
+            detail = error.get('message')
+        elif isinstance(error, str):
+            detail = error
+        else:
+            detail = obj.get('message')
+        if detail:
+            return str(detail)[:180]
+    except (AttributeError, TypeError, ValueError):
+        pass
+    body = getattr(response, 'text', '')
+    return body.strip()[:180] if body.strip() else f'HTTP {response.status_code}'
+
+
+def _google_compatible_schema(value):
+    if isinstance(value, dict):
+        return {
+            key: _google_compatible_schema(item)
+            for key, item in value.items()
+            if key != 'additionalProperties'
+        }
+    if isinstance(value, list):
+        return [_google_compatible_schema(item) for item in value]
+    return value
+
+
+def _google_generate_content(client, secret, model_id, messages, tools):
+    contents = []
+    system_parts = []
+    for item in messages:
+        role = item.get('role')
+        content = item.get('content')
+        if not isinstance(content, str):
+            raise RouterError('Google chat fallback requires text messages.')
+        if role == 'system':
+            system_parts.append(content)
+        elif role in ('user', 'assistant'):
+            contents.append({
+                'role': 'model' if role == 'assistant' else 'user',
+                'parts': [{'text': content}],
+            })
+        else:
+            raise RouterError(f'Google chat fallback does not support the "{role}" message role.')
+
+    request = {'contents': contents}
+    if system_parts:
+        request['systemInstruction'] = {'parts': [{'text': '\n'.join(system_parts)}]}
+    if tools:
+        declarations = [
+            {
+                'name': tool['function']['name'],
+                'description': tool['function'].get('description', ''),
+                'parameters': _google_compatible_schema(tool['function']['parameters']),
+            }
+            for tool in tools
+            if tool.get('type') == 'function' and isinstance(tool.get('function'), dict)
+        ]
+        if declarations:
+            request['tools'] = [{'functionDeclarations': declarations}]
+
+    url = (
+        PROVIDERS['google']['models_url'].rsplit('/models', 1)[0]
+        + '/models/' + quote(model_id, safe='') + ':generateContent'
+    )
+    response = client.post(url, headers={'x-goog-api-key': secret}, json=request)
+    if not response.is_success:
+        detail = _err_detail(response)
+        if response.status_code == 404:
+            raise RouterError(
+                f'The selected Google model "{model_id}" is unavailable for chat (HTTP 404): {detail}. '
+                'Choose another Gemini model and try again.'
+            )
+        raise RouterError(f'Google model request failed (HTTP {response.status_code}): {detail}')
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise RouterError('Google returned an invalid JSON response.') from exc
+    if not isinstance(data, dict):
+        raise RouterError('Google returned an invalid response format.')
+    candidates = data.get('candidates', [])
+    if not candidates or not isinstance(candidates[0], dict):
+        raise RouterError('Google returned no response candidate.')
+    content = candidates[0].get('content')
+    parts = content.get('parts') if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        raise RouterError('Google returned an invalid response candidate.')
+    text = ''.join(part.get('text', '') for part in parts if isinstance(part, dict))
+    tool_calls = []
+    for part in parts:
+        call = part.get('functionCall') if isinstance(part, dict) else None
+        if isinstance(call, dict) and isinstance(call.get('name'), str):
+            tool_calls.append({
+                'id': str(uuid.uuid4()),
+                'type': 'function',
+                'function': {
+                    'name': call['name'],
+                    'arguments': json.dumps(call.get('args', {})),
+                },
+            })
+    return {'role': 'assistant', 'content': text or None, 'tool_calls': tool_calls}
 
 
 def completion(model, messages, simulate_primary_failure=False, tools=None, return_message=False):
@@ -228,7 +329,10 @@ def completion(model, messages, simulate_primary_failure=False, tools=None, retu
                 'messages': messages,
                 'max_tokens': 4096 if key.provider == 'google' else 1024,
                 **({'temperature': 0.4} if key.provider == 'groq' else {}),
-                **({'tools': tools, 'tool_choice': 'auto'} if tools else {}),
+                **({
+                    'tools': _google_compatible_schema(tools) if key.provider == 'google' else tools,
+                    'tool_choice': 'auto',
+                } if tools else {}),
             }
             with httpx.Client(timeout=65) as client:
                 response = client.post(
@@ -236,8 +340,17 @@ def completion(model, messages, simulate_primary_failure=False, tools=None, retu
                     headers={'Authorization': f'Bearer {key.secret}'},
                     json=request,
                 )
-            if response.is_success:
-                message = response.json()['choices'][0]['message']
+            native_google_response = (
+                response.status_code == 404 and key.provider == 'google'
+            )
+            if native_google_response:
+                with httpx.Client(timeout=65) as client:
+                    message = _google_generate_content(
+                        client, key.secret, model_id, messages, tools
+                    )
+            if native_google_response or response.is_success:
+                if not native_google_response:
+                    message = response.json()['choices'][0]['message']
                 if return_message:
                     with lock:
                         key.last_error = ''

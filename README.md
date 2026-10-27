@@ -12,6 +12,22 @@ uv run --active uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 
 Open http://127.0.0.1:8000 for the landing page; `/workspace` is the chat UI.
 
+## Project structure
+
+```text
+backend/
+  api/          FastAPI application and endpoint routers
+  core/         Shared paths, configuration, and application lifecycle
+  repositories/ SQLite persistence for chats, memories, and saved API keys
+  services/    Chat workflows and model-provider routing
+  tools/        Email and design integrations
+  main.py       Uvicorn-compatible application entry point
+frontend/       Browser interface
+data/           Local SQLite databases
+```
+
+The existing launch command (`uvicorn backend.main:app`) remains supported. SQLite database files stay in `data/` at the project root.
+
 ## Migrating from V1
 
 Keep your old `data/chats.db`! **Copy it into V1.2's `data/` folder with the server stopped**; conversations and messages will be preserved. If your database is in SQLite WAL mode, stop your server before moving it, and copy any corresponding `-wal`/`-shm` files if present. Use V1.2 folder as your project folder or copy the updated backend/frontend/requirements into the original project directory. Back up the original first.
@@ -31,6 +47,10 @@ Each chat stores its own full transcript. The model only receives recent message
 ## Email
 
 Configure SMTP under **Engine Control > SMTP Email** (for example, port 587 with STARTTLS or port 465 with SSL/TLS). The assistant can prepare email drafts when asked, but sending always requires you to review the recipient, subject, and body and click **Approve & Send**. A preview can be cancelled without sending. SMTP settings, including the password, are stored unencrypted in the local-only `data/email_settings.db`; do not share or commit this file. Use an app password where your provider supports it. Removing the SMTP configuration disables the email tool.
+
+## Live design assistant
+
+Use the floating **Design Bot** in the workspace to request visual changes in plain language. It previews CSS changes on the current page immediately; click **Approve & Save** to keep them across visits, or **Discard** to restore the last saved design. **Reset Approved Design** removes all saved overrides. The assistant can change only allowlisted CSS properties on known workspace elements; it does not write source files, HTML, JavaScript, or execute generated code. Design instructions use the selected chat model and may incur provider API usage. If Google's OpenAI-compatible chat endpoint does not recognize a listed model, OmniAgent retries that request through Google's native `generateContent` endpoint; models unavailable there report a specific error so you can choose another model.
 
 ## Scope and limitations
 

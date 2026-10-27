@@ -9,7 +9,7 @@ from email.utils import getaddresses
 from pathlib import Path
 from threading import RLock
 
-PATH = Path(__file__).resolve().parents[1] / 'data' / 'email_settings.db'
+PATH = Path(__file__).resolve().parents[2] / 'data' / 'email_settings.db'
 LOCK = RLock()
 ADDRESS_PATTERN = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
