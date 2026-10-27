@@ -27,6 +27,10 @@ class EmailSettingsInput(BaseModel):
     security: str = Field(default='starttls', pattern='^(starttls|ssl)$')
 
 
+class SearchSettingsInput(BaseModel):
+    tavily_api_key: str = Field(min_length=10, max_length=500)
+
+
 class EmailConfirmation(BaseModel):
     confirmation_id: str
     to: str | None = Field(default=None, max_length=2000)

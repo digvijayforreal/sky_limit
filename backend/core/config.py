@@ -11,6 +11,20 @@ SYSTEM_PROMPT = (
 )
 MAX_CONTEXT_CHARS = 65000
 
+DATE_TIME_TOOL = [{
+    'type': 'function',
+    'function': {
+        'name': 'get_current_datetime',
+        'description': 'Get the current date and time in the application server local timezone.',
+        'parameters': {
+            'type': 'object',
+            'properties': {},
+            'required': [],
+            'additionalProperties': False,
+        },
+    },
+}]
+
 EMAIL_TOOLS = [{
     'type': 'function',
     'function': {
@@ -28,3 +42,36 @@ EMAIL_TOOLS = [{
         },
     },
 }]
+
+WEB_TOOLS = [
+    {
+        'type': 'function',
+        'function': {
+            'name': 'web_search',
+            'description': 'Search the public web for current information when the user asks for web research or up-to-date facts.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'query': {'type': 'string', 'description': 'A focused web search query.'},
+                },
+                'required': ['query'],
+                'additionalProperties': False,
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'web_scrape',
+            'description': 'Fetch and extract readable content from a public web page URL supplied or requested by the user.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'url': {'type': 'string', 'description': 'The public HTTP or HTTPS URL to extract.'},
+                },
+                'required': ['url'],
+                'additionalProperties': False,
+            },
+        },
+    },
+]

@@ -1,6 +1,6 @@
 # OmniAgent AI V1.2
 
-Local-first personal AI: FastAPI, vanilla HTML/CSS/JS, Groq and Google AI Studio model APIs, SQLite chats, persistent API key storage, global/temporary explicit memory, and an approval-gated SMTP email tool.
+Local-first personal AI: FastAPI, vanilla HTML/CSS/JS, Groq and Google AI Studio model APIs, SQLite chats, persistent API key storage, global/temporary explicit memory, web search and page extraction, and an approval-gated SMTP email tool.
 
 ## Windows setup (uv)
 
@@ -20,7 +20,7 @@ backend/
   core/         Shared paths, configuration, and application lifecycle
   repositories/ SQLite persistence for chats, memories, and saved API keys
   services/    Chat workflows and model-provider routing
-  tools/        Email and design integrations
+  tools/        Email, web search/page extraction, and design integrations
   main.py       Uvicorn-compatible application entry point
 frontend/       Browser interface
 data/           Local SQLite databases
@@ -48,6 +48,10 @@ Each chat stores its own full transcript. The model only receives recent message
 
 Engine Control shows successful provider requests handled by this app, reported input/output token totals, the latest response time per API key, and the 24-hour, 7-day, 30-day, or all-time totals. This local usage history is stored separately in `data/usage.db`; it does not include usage of the same key outside OmniAgent. Token totals appear only when the provider includes token counts. Groq request/token limits and reset details appear only when returned in response headers. Gemini does not provide a reliable remaining-quota value in these responses; check Google AI Studio for project quota.
 
+## Web search and page extraction
+
+When asked to research current information, the assistant can search the web and display source titles, URLs, and snippets in a structured results card. Configure an optional Tavily API key under **Engine Control > Web Search** to use Tavily; without it, the app uses the DDGS search library. Requests to inspect a public URL use the page extraction tool and show the page title, source, extracted text, and metadata. Scraping is limited to public HTTP/HTTPS pages on standard ports, rejects private/local addresses and redirects, and caps downloaded page size and displayed text. Tavily credentials are stored unencrypted in local `data/search_settings.db`.
+
 ## Email
 
 Configure SMTP under **Engine Control > SMTP Email** (for example, port 587 with STARTTLS or port 465 with SSL/TLS). The assistant can prepare email drafts when asked, but sending always requires you to review the recipient, subject, and body and click **Approve & Send**. A preview can be cancelled without sending. SMTP settings, including the password, are stored unencrypted in the local-only `data/email_settings.db`; do not share or commit this file. Use an app password where your provider supports it. Removing the SMTP configuration disables the email tool.
@@ -60,5 +64,6 @@ Use the floating **Design Bot** in the workspace to request visual changes in pl
 
 - Backup test deliberately skips the first eligible key. Provider rate limits may apply.
 - Model discovery depends on the selected provider's connectivity and API availability.
+- Web Search requires network access. DDGS may be unavailable or rate-limited; a configured Tavily key uses Tavily instead.
 - Email sending is SMTP-only; inbox reading, attachments, image analysis, semantic memory, login, and streaming are not supported.
 - Local-only server middleware restricts remote access. Do not expose this application publicly without authentication, HTTPS, CSRF protections, and proper vault/session isolation.

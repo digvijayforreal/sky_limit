@@ -38,6 +38,90 @@ function markdownHtml(content){
     FORBID_TAGS:['img','style'],
   });
 }
+function parseWebResult(content){
+  const prefix='OMNI_WEB_RESULT_V1:';
+  if(!content.startsWith(prefix))return null;
+  try{
+    const result=JSON.parse(content.slice(prefix.length));
+    if(['web_search','web_scrape'].includes(result.type)&&result.data)return result;
+  }catch(error){console.error('Could not parse structured web result.',error)}
+  return null;
+}
+function webResultLink(url,text){
+  const label=document.createElement('a');
+  label.textContent=text;
+  try{
+    const parsed=new URL(url);
+    if(!['http:','https:'].includes(parsed.protocol))throw new Error('Unsupported link protocol.');
+    label.href=parsed.href;label.target='_blank';label.rel='noopener noreferrer';
+  }catch{label.removeAttribute('href')}
+  return label;
+}
+function renderWebResult(container,result){
+  const data=result.data,card=document.createElement('section');
+  if(result.answer){
+    const answer=document.createElement('div');answer.className='web-result-answer markdown-body';
+    const html=markdownHtml(result.answer);
+    if(html===null)answer.textContent=result.answer;
+    else answer.innerHTML=html;
+    container.append(answer);
+  }
+  card.className='web-result-card';
+  const header=document.createElement('div');header.className='web-result-header';
+  const title=document.createElement('strong');
+  const isSearch=result.type==='web_search';
+  title.textContent=isSearch?'WEB SEARCH RESULTS':'SCRAPED PAGE';
+  const source=document.createElement('span');
+  source.textContent=isSearch?(data.provider||'WEB SEARCH'):data.content_type||'WEB PAGE';
+  header.append(title,source);card.append(header);
+  const summary=document.createElement('p');summary.className='web-result-summary';
+  summary.textContent=result.summary||'';card.append(summary);
+  if(isSearch){
+    const query=document.createElement('p');query.className='web-result-query';
+    query.textContent=`Query: ${data.query||''}`;card.append(query);
+    const results=document.createElement('div');results.className='web-search-results';
+    for(const item of Array.isArray(data.results)?data.results:[]){
+      const entry=document.createElement('article');entry.className='web-search-result';
+      const link=webResultLink(item.url||'',item.title||item.url||'Untitled result');
+      const address=document.createElement('small');address.textContent=item.url||'';
+      const snippet=document.createElement('p');snippet.textContent=item.snippet||'';
+      entry.append(link,address,snippet);results.append(entry);
+    }
+    if(!results.childElementCount){
+      const empty=document.createElement('p');empty.className='web-result-empty';empty.textContent='No search results were returned.';
+      results.append(empty);
+    }
+    card.append(results);
+  }else{
+    const pageTitle=document.createElement('h3');pageTitle.textContent=data.title||'Untitled page';card.append(pageTitle);
+    const sourceRow=document.createElement('div');sourceRow.className='web-scrape-source';
+    const sourceLabel=document.createElement('span');sourceLabel.textContent='SOURCE';
+    sourceRow.append(sourceLabel,webResultLink(data.url||'',data.url||''));
+    card.append(sourceRow);
+    if(data.description){const description=document.createElement('p');description.className='web-scrape-description';description.textContent=data.description;card.append(description)}
+    const content=document.createElement('div');content.className='web-scrape-content';content.textContent=data.content||'No readable page content was extracted.';card.append(content);
+    const metadata=document.createElement('small');metadata.className='web-result-metadata';
+    metadata.textContent=`${Number(data.content_chars)||0} characters${data.truncated?' · content shortened':''}${data.fetched_at?' · fetched '+data.fetched_at:''}`;
+    card.append(metadata);
+  }
+  if(isSearch){
+    const scraped=(Array.isArray(result.evidence)?result.evidence:[])
+      .filter(item=>item.type==='web_scrape'&&item.data?.url);
+    if(scraped.length){
+      const verified=document.createElement('div');verified.className='web-verified-sources';
+      const heading=document.createElement('strong');heading.textContent='VERIFIED PAGE SOURCES';
+      verified.append(heading);
+      for(const item of scraped){
+        const source=document.createElement('article');source.className='web-search-result';
+        source.append(webResultLink(item.data.url,item.data.title||item.data.url));
+        const snippet=document.createElement('p');snippet.textContent=(item.data.content||'').slice(0,600);
+        source.append(snippet);verified.append(source);
+      }
+      card.append(verified);
+    }
+  }
+  container.append(card);
+}
 async function copyText(text){
   if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);return}
   const field=document.createElement('textarea');
@@ -55,7 +139,11 @@ function renderMessage(role,content,meta){
   const txt=document.createElement('div');txt.className='message-text';
   if(role==='assistant'){
     txt.classList.add('markdown-body');txt._rawMarkdown=content;
-    try{
+    const webResult=parseWebResult(content);
+    if(webResult){
+      renderWebResult(txt,webResult);
+      item._rawResponse=webResult.answer||webResult.summary||content;
+    }else try{
       const html=markdownHtml(content);
       if(html===null){txt.textContent=content||'No response text.'}
       else if(content.trim()){txt.innerHTML=html}
@@ -66,7 +154,7 @@ function renderMessage(role,content,meta){
       toast('Could not format the response; showing plain text instead.');
     }
     txt.querySelectorAll('a[href]').forEach(link=>{link.target='_blank';link.rel='noopener noreferrer'});
-    item._rawResponse=content;
+    if(!webResult)item._rawResponse=content;
   }else{txt.textContent=content}
   body.append(header,txt);
   if(role==='assistant'&&!content.startsWith('THINKING WITH ')){
@@ -268,7 +356,38 @@ async function sendMessage(){
     clearTimeout(slowTimer);clearTimeout(timeout);setBusy(false);$('messageInput').focus();
   }
 }
-function showSettings(){$('settingsOverlay').classList.remove('hidden');$('apiKey').value='';loadEmailSettings();loadUsage()}
+function ensureSearchSettingsUI(){
+  if($('searchSettingsForm'))return;
+  const section=document.createElement('section');section.className='settings-section';
+  section.innerHTML='<div class="flex-title"><h3>WEB SEARCH</h3><span id="searchConfigStatus">CHECKING</span></div><p class="fine-print">Search uses Tavily when configured; otherwise it uses DDGS. The Tavily key is stored locally in data/search_settings.db.</p><form id="searchSettingsForm" class="key-form"><label>TAVILY API KEY<input id="tavilyApiKey" type="password" maxlength="500" autocomplete="new-password" placeholder="Leave blank to keep saved key"></label><button type="submit" id="saveSearchSettings">SAVE TAVILY KEY</button></form><button type="button" class="subtle-btn" id="clearSearchSettings">REMOVE TAVILY KEY</button>';
+  $('emailSettingsForm').closest('.settings-section').before(section);
+  $('searchSettingsForm').onsubmit=async event=>{
+    event.preventDefault();
+    const button=$('saveSearchSettings');button.disabled=true;button.textContent='SAVING…';
+    try{
+      await api('/api/search/settings',{method:'PUT',body:JSON.stringify({tavily_api_key:$('tavilyApiKey').value})});
+      $('tavilyApiKey').value='';await loadSearchSettings();toast('Tavily search key saved.');
+    }catch(error){toast(error.message)}
+    finally{button.disabled=false;button.textContent='SAVE TAVILY KEY'}
+  };
+  $('clearSearchSettings').onclick=async()=>{
+    if(!confirm('Remove the saved Tavily API key? Web search will use DDGS.'))return;
+    try{await api('/api/search/settings',{method:'DELETE'});$('tavilyApiKey').value='';await loadSearchSettings();toast('Tavily key removed; web search will use DDGS.')}
+    catch(error){toast(error.message)}
+  };
+}
+async function loadSearchSettings(){
+  try{
+    const config=await api('/api/search/settings');
+    $('searchConfigStatus').textContent=config.tavily_configured
+      ?`TAVILY READY · ••••${config.tavily_key_hint}`
+      :'DDGS ACTIVE · NO TAVILY KEY';
+    $('tavilyApiKey').placeholder=config.tavily_configured
+      ?'Saved key kept unless replaced'
+      :'Paste Tavily API key to enable Tavily';
+  }catch(error){$('searchConfigStatus').textContent='STATUS UNAVAILABLE';toast(error.message)}
+}
+function showSettings(){$('settingsOverlay').classList.remove('hidden');$('apiKey').value='';ensureSearchSettingsUI();loadSearchSettings();loadEmailSettings();loadUsage()}
 $('settingsBtn').onclick=()=>{showSettings();loadMemories()};$('closeSettings').onclick=()=>$('settingsOverlay').classList.add('hidden');$('settingsOverlay').addEventListener('click',e=>{if(e.target===$('settingsOverlay'))$('settingsOverlay').classList.add('hidden')});$('menuBtn').onclick=()=>$('sidebar').classList.toggle('open');$('newChat').onclick=newChat;$('chatForm').onsubmit=e=>{e.preventDefault();sendMessage()};$('messageInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});$('modelSelect').onchange=e=>{selectedModel=e.target.value};$('modelSearch').oninput=renderModelOptions;document.addEventListener('click',e=>{const quick=e.target.closest('[data-prompt]');if(quick){$('messageInput').value=quick.dataset.prompt;$('messageInput').focus()}});
 $('apiProvider').onchange=()=>{const google=$('apiProvider').value==='google';$('apiKeyLabel').firstChild.textContent=google?'GOOGLE AI STUDIO API KEY':'GROQ API KEY';$('apiKey').placeholder=google?'AIza••••••••••••••••':'gsk_••••••••••••••'};
 $('keyForm').onsubmit=async e=>{e.preventDefault();const btn=$('addKeyBtn');btn.disabled=true;btn.textContent='VALIDATING…';const provider=$('apiProvider').value;try{const key=$('apiKey').value;await api('/api/keys',{method:'POST',body:JSON.stringify({name:$('keyName').value,api_key:key,provider,remember:$('rememberKey').checked})});$('apiKey').value='';$('keyName').value='';await loadModels();toast(`${provider==='google'?'Google AI Studio':'Groq'} key validated and connected.`)}catch(err){toast(err.message)}finally{btn.disabled=false;btn.textContent='+ CONNECT API'}};

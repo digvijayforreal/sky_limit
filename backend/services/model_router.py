@@ -260,7 +260,7 @@ def _rate_limits(headers):
     }
 
 
-def _google_generate_content(client, secret, model_id, messages, tools):
+def _google_generate_content(client, secret, model_id, messages, tools, tool_choice=None):
     contents = []
     system_parts = []
     for item in messages:
@@ -293,6 +293,15 @@ def _google_generate_content(client, secret, model_id, messages, tools):
         ]
         if declarations:
             request['tools'] = [{'functionDeclarations': declarations}]
+            if isinstance(tool_choice, dict) and isinstance(tool_choice.get('function'), dict):
+                function_name = tool_choice['function'].get('name')
+                if function_name:
+                    request['toolConfig'] = {
+                        'functionCallingConfig': {
+                            'mode': 'ANY',
+                            'allowedFunctionNames': [function_name],
+                        }
+                    }
 
     url = (
         PROVIDERS['google']['models_url'].rsplit('/models', 1)[0]
@@ -341,7 +350,10 @@ def _google_generate_content(client, secret, model_id, messages, tools):
     )
 
 
-def completion(model, messages, simulate_primary_failure=False, tools=None, return_message=False):
+def completion(
+    model, messages, simulate_primary_failure=False, tools=None,
+    return_message=False, tool_choice=None,
+):
     """Attempts eligible provider keys and returns a text or provider message with metadata."""
     provider, model_id = _split_model_selector(model)
     with lock:
@@ -370,7 +382,7 @@ def completion(model, messages, simulate_primary_failure=False, tools=None, retu
                 **({'temperature': 0.4} if key.provider == 'groq' else {}),
                 **({
                     'tools': _google_compatible_schema(tools) if key.provider == 'google' else tools,
-                    'tool_choice': 'auto',
+                    'tool_choice': tool_choice or 'auto',
                 } if tools else {}),
             }
             with httpx.Client(timeout=65) as client:
@@ -385,7 +397,7 @@ def completion(model, messages, simulate_primary_failure=False, tools=None, retu
             if native_google_response:
                 with httpx.Client(timeout=65) as client:
                     message, token_usage, rate_limits = _google_generate_content(
-                        client, key.secret, model_id, messages, tools
+                        client, key.secret, model_id, messages, tools, tool_choice
                     )
             if native_google_response or response.is_success:
                 if not native_google_response:
