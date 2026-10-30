@@ -38,7 +38,7 @@ Create a Google AI Studio API key in [Google AI Studio](https://aistudio.google.
 
 Enable **Save key on this computer** to restore keys on server restart. The local-only SQLite file `data/api_keys.db` contains keys **in plaintext**: do not share, commit, or back up to insecure locations. Uncheck saving for temporary keys. No API key is included in project files.
 
-**Upgrade from V1.1:** its old `data/vault.db` cannot be decrypted without the previous master password and is left untouched. Existing Groq keys and conversations remain supported; the key database adds a provider field with existing keys defaulting to Groq. Copy your old `data/chats.db` to keep conversations and explicitly saved memories.
+**Upgrade from V1.1:** its old `data/vault.db` cannot be decrypted without the previous master password and is left untouched. Existing Groq keys and conversations remain supported; the key databse adds a provider field with existing keys defaulting to Groq. Copy your old `data/chats.db` to keep conversations and explicitly saved memories.
 
 ## Memory
 
